@@ -7,7 +7,7 @@ import os
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
-# --- 1. RenderおよびUptimeRobot対策の簡易Webサーバー ---
+# --- 1. UptimeRobotおよびRenderのLive維持用Webサーバー ---
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -15,7 +15,6 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(b"Bot is active and running!")
     def log_message(self, format, *args):
-        # ログが大量に出るのを防ぐため、HTTPアクセスのログは非表示にする
         pass
 
 def run_web_server():
@@ -23,7 +22,6 @@ def run_web_server():
     server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
     server.serve_forever()
 
-# 別スレッドでWebサーバーを常時稼働させる（これでRenderがLiveになり、UptimeRobotの監視にも応答します）
 threading.Thread(target=run_web_server, daemon=True).start()
 
 # --- 2. Discord Botの設定 ---
@@ -55,7 +53,7 @@ citycodes = {
     "山梨県 甲府市": "190010",
     "長野県 長野市": "200010", "長野県 松本市": "200020",
     "岐阜県 岐阜市": "210010",
-    "静岡県 静岡市": "220010", "静岡県 浜松市 沼津市": "220020",
+    "静岡県 静岡市": "220010", "静岡県 浜松市": "220020",
     "愛知県 名古屋市": "230010", "愛知県 豊田市": "230020",
     "三重県 津市": "240010", "三重県 四日市市": "240020",
     "滋賀県 大津市": "250010",
@@ -164,7 +162,6 @@ async def tenki(interaction: discord.Interaction, prefecture: str = None, city: 
     if target_key in citycodes:
         citycode = citycodes[target_key]
         try:
-            # APIブロック回避用のUser-Agent設定
             url = f"https://weather.tsukumijima.net/api/forecast/city/{citycode}"
             req = urllib.request.Request(
                 url, 
