@@ -2,7 +2,7 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 import json
-import urllib
+import urllib.request
 import os
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -13,7 +13,6 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.end_headers()
         self.wfile.write(b"Discord Bot is alive!")
-    # ログを非表示にしてコンソールを綺麗にする
     def log_message(self, format, *args):
         pass
 
@@ -22,7 +21,6 @@ def run_web_server():
     server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
     server.serve_forever()
 
-# 別スレッドでWebサーバーを起動（これによりRenderで「Live」になります）
 threading.Thread(target=run_web_server, daemon=True).start()
 
 # --- 2. Discord Botの設定 ---
@@ -71,18 +69,14 @@ async def on_ready():
     
     print(f"起動完了: {bot.user}")
 
-# --- 3. オートコンプリート（自動候補表示）の定義 ---
 async def city_autocomplete(
     interaction: discord.Interaction,
     current: str,
 ) -> list[app_commands.Choice[str]]:
-    # 入力された文字に一致する都道府県を最大25件まで抽出して候補にする
     return [
         app_commands.Choice(name=city, value=city)
         for city in citycodes.keys() if current in city
     ][:25]
-
-# --- 4. コマンドの定義 ---
 
 @bot.tree.command(name="set_city", description="自分のデフォルトの都道府県を設定します")
 @app_commands.describe(city="設定する都道府県名")
@@ -140,8 +134,16 @@ async def tenki(interaction: discord.Interaction, city: str = None):
     if city in citycodes:
         citycode = citycodes[city]
         try:
-            resp = urllib.request.urlopen(f"https://weather.tsukumijima.net/api/forecast/city/{citycode}").read()
-            resp = json.loads(resp.decode("utf-8"))
+            # ブラウザになりすますためのヘッダー（User-Agent）を追加
+            url = f"https://weather.tsukumijima.net/api/forecast/city/{citycode}"
+            req = urllib.request.Request(
+                url, 
+                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+            )
+            
+            with urllib.request.urlopen(req) as response:
+                resp = json.loads(response.read().decode("utf-8"))
+                
             msg = "__【お天気情報：**" + resp["location"]["city"] + "**】__\n"
             for f in resp["forecasts"]:
                 msg += f["dateLabel"] + "：**" + f["telop"] + "**\n"
@@ -149,7 +151,9 @@ async def tenki(interaction: discord.Interaction, city: str = None):
 
             await interaction.response.send_message(msg)
         except Exception as e:
-            await interaction.response.send_message("天気情報の取得に失敗しました。", ephemeral=True)
+            # エラーの詳細をRenderのコンソール（Logs）に出力する
+            print(f"Weather API Error: {e}")
+            await interaction.response.send_message("天気情報の取得に失敗しました（APIへの接続に問題が発生しました）。", ephemeral=True)
     else:
         await interaction.response.send_message("そこの天気はわかりません...", ephemeral=True)
 
