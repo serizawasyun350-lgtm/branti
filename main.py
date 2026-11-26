@@ -4,11 +4,31 @@ from discord import app_commands
 import json
 import urllib
 import os
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 
+# --- 1. Renderで「Live」にするための簡易Webサーバー設定 ---
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Discord Bot is alive!")
+    # ログを非表示にしてコンソールを綺麗にする
+    def log_message(self, format, *args):
+        pass
+
+def run_web_server():
+    port = int(os.environ.get("PORT", 10000))
+    server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
+    server.serve_forever()
+
+# 別スレッドでWebサーバーを起動（これによりRenderで「Live」になります）
+threading.Thread(target=run_web_server, daemon=True).start()
+
+# --- 2. Discord Botの設定 ---
 intents = discord.Intents.default()
 intents.message_content = True
 
-# botの定義
 bot = commands.Bot(command_prefix="/", intents=intents)
 
 # 47都道府県の都市コード
@@ -43,7 +63,6 @@ user_settings = load_settings()
 
 @bot.event
 async def on_ready():
-    # Discordへスラッシュコマンドを同期（登録）する
     try:
         synced = await bot.tree.sync()
         print(f"スラッシュコマンドを {len(synced)} 個同期しました。")
@@ -52,12 +71,25 @@ async def on_ready():
     
     print(f"起動完了: {bot.user}")
 
-# 1. 地域登録コマンド（スラッシュコマンド）
+# --- 3. オートコンプリート（自動候補表示）の定義 ---
+async def city_autocomplete(
+    interaction: discord.Interaction,
+    current: str,
+) -> list[app_commands.Choice[str]]:
+    # 入力された文字に一致する都道府県を最大25件まで抽出して候補にする
+    return [
+        app_commands.Choice(name=city, value=city)
+        for city in citycodes.keys() if current in city
+    ][:25]
+
+# --- 4. コマンドの定義 ---
+
 @bot.tree.command(name="set_city", description="自分のデフォルトの都道府県を設定します")
-@app_commands.describe(city="設定する都道府県名（例: 東京）")
+@app_commands.describe(city="設定する都道府県名")
+@app_commands.autocomplete(city=city_autocomplete)
 async def set_city(interaction: discord.Interaction, city: str):
     if city not in citycodes:
-        await interaction.response.send_message("正しい都道府県名を指定してください。例: `/set_city 東京`", ephemeral=True)
+        await interaction.response.send_message("正しい都道府県名を指定してください。", ephemeral=True)
         return
 
     user_id = str(interaction.user.id)
@@ -69,7 +101,6 @@ async def set_city(interaction: discord.Interaction, city: str):
     save_settings(user_settings)
     await interaction.response.send_message(f"あなたの地域を **{city}** に設定しました。（位置情報取得: ON）", ephemeral=True)
 
-# 2. 位置情報設定コマンド（true / false）
 @bot.tree.command(name="location_setting", description="登録した地域の自動使用を切り替えます")
 @app_commands.describe(flag="true または false を選択してください")
 @app_commands.choices(flag=[
@@ -89,9 +120,9 @@ async def location_setting(interaction: discord.Interaction, flag: str):
     status_text = "有効 (true)" if use_loc else "無効 (false)"
     await interaction.response.send_message(f"位置情報（登録地域）の自動取得を **{status_text}** にしました。", ephemeral=True)
 
-# 3. 天気確認コマンド
 @bot.tree.command(name="tenki", description="指定した地域、または登録した地域の天気を確認します")
 @app_commands.describe(city="都道府県名（省略時は登録地域を使用）")
+@app_commands.autocomplete(city=city_autocomplete)
 async def tenki(interaction: discord.Interaction, city: str = None):
     user_id = str(interaction.user.id)
     setting = user_settings.get(user_id, {"use_location": False, "city": None})
@@ -101,7 +132,7 @@ async def tenki(interaction: discord.Interaction, city: str = None):
             city = setting["city"]
         else:
             await interaction.response.send_message(
-                "地域が指定されていません。\n`/set_city 都道府県名` で登録するか、`/tenki 東京` のように指定してください。", 
+                "地域が指定されていません。\n`/set_city 都道府県名` で登録するか、コマンドで地域を選択してください。", 
                 ephemeral=True
             )
             return
